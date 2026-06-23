@@ -1,10 +1,6 @@
-# ── Backend: node:20-alpine ──────────────────────────────────────────────────
-
-# openssl in node:20-alpine base image — fixed in 3.5.7-r0, awaiting upstream Alpine bump
-CVE-2026-45447
-
-# cross-spawn, glob, minimatch, tar — all in npm's own bundled modules (not our app deps)
-# npm is not used at container runtime; these are build-tool CVEs only
+# cross-spawn, glob, minimatch, tar — bundled inside npm's own install, not our app deps.
+# npm is never invoked at container runtime (only node src/index.js runs).
+# These cannot be fixed via apk upgrade — they are npm's vendored JS, not Alpine packages.
 CVE-2024-21538
 CVE-2025-64756
 CVE-2026-26996
@@ -16,34 +12,3 @@ CVE-2026-24842
 CVE-2026-26960
 CVE-2026-29786
 CVE-2026-31802
-
-# ── Frontend: nginx:1.27-alpine (Alpine 3.20+) ───────────────────────────────
-
-# curl/libcurl — nginx does not call curl at runtime; only present as an Alpine package
-CVE-2024-6197
-
-# openssl — nginx uses TLS termination but these are DoS-only in X.509 name checks
-# exploitable only when nginx acts as TLS client verifying peer certs (not our use case)
-CVE-2024-6119
-
-# libexpat — used by Python/other tools in the Alpine layer, not by nginx itself
-CVE-2024-45490
-CVE-2024-45491
-CVE-2024-45492
-CVE-2025-59375
-
-# libxml2 / libxslt — nginx does not process XML; these libraries are Alpine base deps
-CVE-2024-56171
-CVE-2025-24928
-CVE-2025-27113
-CVE-2025-32414
-CVE-2025-32415
-CVE-2024-55549
-CVE-2025-24855
-
-# musl — Alpine's libc; attacks require local code execution which is out of scope
-CVE-2025-26519
-CVE-2026-40200
-
-# xz-libs — threaded .xz decoder; nginx does not decompress .xz archives
-CVE-2025-31115
