@@ -1,0 +1,41 @@
+# Node
+node_modules/
+*.log
+npm-debug.log*
+dist/
+.env
+.env.local
+.env.production
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+
+# Docker
+.dockerenv
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# AWS
+.aws/
+
+# Secrets
+*.pem
+*.key
+*.crt
