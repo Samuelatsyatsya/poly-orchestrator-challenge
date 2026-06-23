@@ -1,0 +1,113 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: shopnow
+      POSTGRES_USER: shopnow
+      POSTGRES_PASSWORD: shopnow_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shopnow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shopnow
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shopnow
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shopnow
+      DB_USER: shopnow
+      DB_PASSWORD: shopnow_password
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: local-dev-secret-change-in-prod
+      JWT_EXPIRES_IN: 7d
+      FRONTEND_URL: http://localhost:5173
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - shopnow
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: node src/config/migrate.js
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shopnow
+      DB_USER: shopnow
+      DB_PASSWORD: shopnow_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shopnow
+    restart: "no"
+
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: node src/config/seed.js
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: shopnow
+      DB_USER: shopnow
+      DB_PASSWORD: shopnow_password
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - shopnow
+    restart: "no"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - shopnow
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  shopnow:
+    driver: bridge
