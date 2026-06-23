@@ -1,0 +1,14 @@
+aws_region = "us-east-1"
+name       = "shopnow"
+vpc_cidr   = "10.0.0.0/16"
+
+frontend_desired_count = 2
+backend_desired_count  = 2
+
+# Provide these values — store secrets in AWS SSM or a vault, not in version control
+db_host     = "your-rds-endpoint-or-ecs-service-name"
+db_name     = "shopnow"
+db_user     = "shopnow"
+db_password = "CHANGE_ME_STRONG_PASSWORD"
+redis_host  = "your-elasticache-endpoint-or-ecs-service-name"
+jwt_secret  = "CHANGE_ME_STRONG_JWT_SECRET"
