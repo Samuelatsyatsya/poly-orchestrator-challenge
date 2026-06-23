@@ -337,38 +337,6 @@ resource "aws_service_discovery_service" "redis" {
 }
 
 ################################
-# EFS — Postgres data persistence
-# Without this, all data is lost when the Postgres task restarts
-################################
-resource "aws_efs_file_system" "postgres" {
-  encrypted        = true
-  performance_mode = "generalPurpose"
-  throughput_mode  = "bursting"
-  tags             = merge(var.tags, { Name = "${var.name}-postgres-efs" })
-}
-
-resource "aws_efs_mount_target" "postgres" {
-  for_each = toset(var.private_subnet_ids)
-
-  file_system_id  = aws_efs_file_system.postgres.id
-  subnet_id       = each.value
-  security_groups = [var.postgres_sg_id]
-}
-
-################################
-# EFS Security Group — allow NFS from Postgres SG
-# EFS mount targets need port 2049 inbound
-################################
-resource "aws_vpc_security_group_ingress_rule" "efs_from_postgres" {
-  security_group_id            = var.postgres_sg_id
-  referenced_security_group_id = var.postgres_sg_id
-  from_port                    = 2049
-  to_port                      = 2049
-  ip_protocol                  = "tcp"
-  description                  = "NFS from Postgres tasks to EFS"
-}
-
-################################
 # CloudWatch Log Groups — Postgres & Redis
 ################################
 resource "aws_cloudwatch_log_group" "postgres" {
@@ -384,23 +352,6 @@ resource "aws_cloudwatch_log_group" "redis" {
 }
 
 ################################
-# IAM — allow execution role to use EFS
-################################
-resource "aws_iam_role_policy" "execution_efs" {
-  name = "${var.name}-ecs-execution-efs"
-  role = aws_iam_role.execution.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["elasticfilesystem:ClientMount", "elasticfilesystem:ClientWrite"]
-      Resource = aws_efs_file_system.postgres.arn
-    }]
-  })
-}
-
-################################
 # Task Definitions — Postgres & Redis
 ################################
 resource "aws_ecs_task_definition" "postgres" {
@@ -412,14 +363,6 @@ resource "aws_ecs_task_definition" "postgres" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.task.arn
 
-  volume {
-    name = "pgdata"
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.postgres.id
-      transit_encryption = "ENABLED"
-    }
-  }
-
   container_definitions = jsonencode([{
     name      = "postgres"
     image     = "postgres:16-alpine"
@@ -429,13 +372,7 @@ resource "aws_ecs_task_definition" "postgres" {
       { name = "POSTGRES_DB",       value = var.db_name },
       { name = "POSTGRES_USER",     value = var.db_user },
       { name = "POSTGRES_PASSWORD", value = var.db_password },
-      { name = "PGDATA",            value = "/var/lib/postgresql/data/pgdata" },
     ]
-    mountPoints = [{
-      sourceVolume  = "pgdata"
-      containerPath = "/var/lib/postgresql/data"
-      readOnly      = false
-    }]
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -515,8 +452,7 @@ resource "aws_ecs_service" "postgres" {
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
 
-  depends_on = [aws_efs_mount_target.postgres]
-  tags       = var.tags
+  tags = var.tags
 }
 
 resource "aws_ecs_service" "redis" {
