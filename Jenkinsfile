@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION    = 'eu-central-1'
+        AWS_REGION    = 'us-east-1'
         BACKEND_REPO  = 'shopnow-backend'
         FRONTEND_REPO = 'shopnow-frontend'
         ECS_CLUSTER   = 'shopnow-cluster'
