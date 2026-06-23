@@ -8,9 +8,9 @@ terraform {
   }
 
   backend "s3" {
-    bucket  = "shopnow-terraform-state"
+    bucket  = "shopnow-terraform-state-eu"
     key     = "ecs/terraform.tfstate"
-    region  = "us-east-1"
+    region  = "eu-central-1"
     profile = "CostDetective"
   }
 }

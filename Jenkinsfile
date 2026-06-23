@@ -2,14 +2,11 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION     = 'us-east-1'
-        AWS_ACCOUNT_ID = 'REDACTED_ACCOUNT_ID'
-        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        BACKEND_REPO   = 'shopnow-backend'
-        FRONTEND_REPO  = 'shopnow-frontend'
-        ECS_CLUSTER    = 'shopnow-cluster'
-        // Tag combines build number + short commit SHA for full traceability
-        IMAGE_TAG      = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
+        AWS_REGION    = 'eu-central-1'
+        BACKEND_REPO  = 'shopnow-backend'
+        FRONTEND_REPO = 'shopnow-frontend'
+        ECS_CLUSTER   = 'shopnow-cluster'
+        IMAGE_TAG     = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
     }
 
     stages {
@@ -17,6 +14,24 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+
+        stage('Resolve AWS Account') {
+            // Derive the account ID from the IAM credentials at runtime — never hardcode it
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'indestructible-creds'
+                ]]) {
+                    script {
+                        env.AWS_ACCOUNT_ID = sh(
+                            script: "aws sts get-caller-identity --query Account --output text --region ${AWS_REGION}",
+                            returnStdout: true
+                        ).trim()
+                        env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                    }
+                }
             }
         }
 
@@ -109,15 +124,31 @@ pipeline {
                     $class: 'AmazonWebServicesCredentialsBinding',
                     credentialsId: 'indestructible-creds'
                 ]]) {
-                    sh """
-                        aws ecs run-task \
-                          --cluster ${ECS_CLUSTER} \
-                          --task-definition shopnow-backend \
-                          --launch-type FARGATE \
-                          --overrides '{"containerOverrides":[{"name":"backend","command":["node","src/config/migrate.js"]}]}' \
-                          --network-configuration 'awsvpcConfiguration={subnets=[subnet-051844984fe8f8f90,subnet-00bc2912259e27b6d],securityGroups=[sg-0ec0df1bc86745296],assignPublicIp=DISABLED}' \
-                          --region ${AWS_REGION}
-                    """
+                    script {
+                        def subnets = sh(
+                            script: """aws ec2 describe-subnets \
+                              --filters 'Name=tag:Name,Values=shopnow-ecs-private-*' \
+                              --query 'Subnets[*].SubnetId' \
+                              --output text --region ${AWS_REGION} | tr '\\t' ','""",
+                            returnStdout: true
+                        ).trim()
+                        def backendSg = sh(
+                            script: """aws ec2 describe-security-groups \
+                              --filters 'Name=tag:Name,Values=shopnow-ecs-backend-sg' \
+                              --query 'SecurityGroups[0].GroupId' \
+                              --output text --region ${AWS_REGION}""",
+                            returnStdout: true
+                        ).trim()
+                        sh """
+                            aws ecs run-task \
+                              --cluster ${ECS_CLUSTER} \
+                              --task-definition shopnow-backend \
+                              --launch-type FARGATE \
+                              --overrides '{"containerOverrides":[{"name":"backend","command":["node","src/config/migrate.js"]}]}' \
+                              --network-configuration 'awsvpcConfiguration={subnets=[${subnets}],securityGroups=[${backendSg}],assignPublicIp=DISABLED}' \
+                              --region ${AWS_REGION}
+                        """
+                    }
                 }
             }
         }
