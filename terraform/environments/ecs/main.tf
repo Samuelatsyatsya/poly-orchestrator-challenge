@@ -62,17 +62,17 @@ module "ecs" {
   alb_sg_id          = module.security_groups.alb_sg_id
   frontend_sg_id     = module.security_groups.frontend_sg_id
   backend_sg_id      = module.security_groups.backend_sg_id
+  postgres_sg_id     = module.security_groups.postgres_sg_id
+  redis_sg_id        = module.security_groups.redis_sg_id
 
   frontend_image         = "${module.ecr.frontend_repository_url}:latest"
   backend_image          = "${module.ecr.backend_repository_url}:latest"
   frontend_desired_count = var.frontend_desired_count
   backend_desired_count  = var.backend_desired_count
 
-  db_host     = var.db_host
   db_name     = var.db_name
   db_user     = var.db_user
   db_password = var.db_password
-  redis_host  = var.redis_host
   jwt_secret  = var.jwt_secret
 
   tags = local.common_tags

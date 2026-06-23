@@ -23,10 +23,6 @@ variable "backend_desired_count" {
   default = 2
 }
 
-variable "db_host" {
-  type = string
-}
-
 variable "db_name" {
   type    = string
   default = "shopnow"
@@ -40,10 +36,6 @@ variable "db_user" {
 variable "db_password" {
   type      = string
   sensitive = true
-}
-
-variable "redis_host" {
-  type = string
 }
 
 variable "jwt_secret" {

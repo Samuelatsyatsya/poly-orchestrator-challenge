@@ -30,6 +30,14 @@ variable "backend_sg_id" {
   type = string
 }
 
+variable "postgres_sg_id" {
+  type = string
+}
+
+variable "redis_sg_id" {
+  type = string
+}
+
 variable "frontend_image" {
   type = string
 }
@@ -68,10 +76,6 @@ variable "backend_desired_count" {
   default = 2
 }
 
-variable "db_host" {
-  type = string
-}
-
 variable "db_name" {
   type = string
 }
@@ -83,10 +87,6 @@ variable "db_user" {
 variable "db_password" {
   type      = string
   sensitive = true
-}
-
-variable "redis_host" {
-  type = string
 }
 
 variable "jwt_secret" {
