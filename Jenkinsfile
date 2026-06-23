@@ -115,7 +115,7 @@ pipeline {
                           --task-definition shopnow-backend \
                           --launch-type FARGATE \
                           --overrides '{"containerOverrides":[{"name":"backend","command":["node","src/config/migrate.js"]}]}' \
-                          --network-configuration 'awsvpcConfiguration={subnets=[],securityGroups=[],assignPublicIp=DISABLED}' \
+                          --network-configuration 'awsvpcConfiguration={subnets=[subnet-051844984fe8f8f90,subnet-00bc2912259e27b6d],securityGroups=[sg-0ec0df1bc86745296],assignPublicIp=DISABLED}' \
                           --region ${AWS_REGION}
                     """
                 }
