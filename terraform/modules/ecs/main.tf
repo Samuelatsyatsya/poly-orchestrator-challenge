@@ -358,16 +358,11 @@ resource "aws_efs_mount_target" "postgres" {
 resource "aws_efs_access_point" "postgres" {
   file_system_id = aws_efs_file_system.postgres.id
 
-  posix_user {
-    gid = 999
-    uid = 999
-  }
-
   root_directory {
     path = "/pgdata"
     creation_info {
-      owner_gid   = 999
-      owner_uid   = 999
+      owner_gid   = 0
+      owner_uid   = 0
       permissions = "755"
     }
   }
@@ -439,7 +434,7 @@ resource "aws_ecs_task_definition" "postgres" {
       transit_encryption      = "ENABLED"
       authorization_config {
         access_point_id = aws_efs_access_point.postgres.id
-        iam             = "ENABLED"
+        iam             = "DISABLED"
       }
     }
   }
