@@ -1,6 +1,6 @@
 # ShopNow — Poly-Orchestrator Challenge
 
-A 3-tier e-commerce application deployed to both **Amazon ECS (Fargate)** and **Amazon EKS** to benchmark orchestration platforms.
+A 3-tier e-commerce application containerised with Docker and deployed to both **Amazon ECS (Fargate)** and **Amazon EKS** to benchmark orchestration platforms. A Jenkins CI/CD pipeline builds, scans, and deploys on every push.
 
 | Tier | Technology |
 |------|------------|
@@ -25,7 +25,7 @@ Internet
            Postgres     Redis
 ```
 
-Traffic always flows through one ALB, eliminating CORS issues and reducing cost vs. two separate load balancers.
+Traffic flows through one ALB, eliminating CORS issues and reducing cost vs. two separate load balancers. In ECS, Postgres and Redis run as Fargate services registered with AWS Cloud Map (`postgres.shopnow.local`, `redis.shopnow.local`). In EKS they run as ClusterIP services resolved by Kubernetes DNS.
 
 ---
 
@@ -35,56 +35,58 @@ Traffic always flows through one ALB, eliminating CORS issues and reducing cost 
 poly-orchestrator-challenge/
 ├── frontend/               # React + Tailwind (Vite)
 │   ├── src/
-│   ├── Dockerfile          # Multi-stage: build → nginx
+│   ├── Dockerfile          # Multi-stage: build → nginx:1.27-alpine
 │   └── nginx.conf
 ├── backend/                # Node.js + Express API
 │   ├── src/
 │   │   ├── config/         # DB, Redis, migrate, seed
 │   │   ├── controllers/    # auth, products, cart, orders
-│   │   ├── middleware/     # auth (JWT), validate, errorHandler
+│   │   ├── middleware/     # JWT auth, validate, errorHandler
 │   │   └── routes/
-│   └── Dockerfile
+│   └── Dockerfile          # node:20-alpine, non-root user
 ├── docker-compose.yml      # Local development
+├── Jenkinsfile             # CI/CD pipeline
+├── .trivyignore            # npm-bundled CVEs not reachable at runtime
 ├── terraform/
 │   ├── modules/
 │   │   ├── vpc/            # VPC, subnets, NAT gateways
 │   │   ├── ecr/            # Container registries
 │   │   ├── security-groups/
-│   │   ├── ecs/            # Cluster, task defs, services, ALB
+│   │   ├── ecs/            # Cluster, task defs, services, ALB, Cloud Map
 │   │   └── eks/            # Cluster, node group, OIDC, ALB controller IAM
 │   └── environments/
-│       ├── ecs/            # ECS deployment root
-│       └── eks/            # EKS deployment root
-└── k8s/
-    ├── namespace/
-    ├── postgres/
-    ├── redis/
-    ├── backend/
-    ├── frontend/
-    └── ingress/            # AWS Load Balancer Controller ingress
+│       ├── ecs/            # ECS deployment root (eu-central-1)
+│       └── eks/            # EKS deployment root (eu-central-1)
+├── k8s/
+│   ├── namespace/
+│   ├── postgres/
+│   ├── redis/
+│   ├── backend/
+│   ├── frontend/
+│   └── ingress/            # AWS Load Balancer Controller ingress
+└── docs/
+    └── screenshots/
 ```
 
 ---
 
 ## Prerequisites
 
-| Tool | Version | Install |
-|------|---------|---------|
-| Docker | 24+ | [docs.docker.com](https://docs.docker.com/get-docker/) |
-| AWS CLI | v2 | [aws.amazon.com/cli](https://aws.amazon.com/cli/) |
-| Terraform | 1.6+ | [terraform.io](https://developer.hashicorp.com/terraform/install) |
-| kubectl | 1.29+ | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
-| Helm | 3.x | [helm.sh](https://helm.sh/docs/intro/install/) |
+| Tool | Version |
+|------|---------|
+| Docker | 24+ |
+| AWS CLI | v2 |
+| Terraform | 1.6+ |
+| kubectl | 1.29+ |
+| Helm | 3.x |
+| Jenkins | 2.x (with AWS credentials plugin) |
 
 ### AWS Profile
 
-This project uses the `CostDetective` AWS profile:
-
 ```bash
 aws configure --profile CostDetective
-# Enter: Access Key ID, Secret Access Key, Region (us-east-1), Output (json)
+# Region: eu-central-1
 
-# Verify
 aws sts get-caller-identity --profile CostDetective
 ```
 
@@ -93,62 +95,46 @@ aws sts get-caller-identity --profile CostDetective
 ## Step 1 — Run Locally with Docker Compose
 
 ```bash
-# 1. Build and start all services
 docker compose up --build -d
-
-# 2. Run database migration (creates tables)
 docker compose run --rm migrate
-
-# 3. Seed 10 sample products
 docker compose run --rm seed
 
-# 4. Open the app
-open http://localhost        # Frontend
-curl http://localhost:3000/api/health  # Backend health check
-```
-
-To stop:
-```bash
-docker compose down -v   # -v removes volumes (resets database)
+open http://localhost
+curl http://localhost:3000/api/health
 ```
 
 ---
 
-## Step 2 — Create S3 Bucket for Terraform State
+## Step 2 — Terraform State Bucket
 
 ```bash
-aws s3 mb s3://shopnow-terraform-state --region us-east-1 --profile CostDetective
+aws s3 mb s3://shopnow-terraform-state-eu --region eu-central-1 --profile CostDetective
 aws s3api put-bucket-versioning \
-  --bucket shopnow-terraform-state \
+  --bucket shopnow-terraform-state-eu \
   --versioning-configuration Status=Enabled \
   --profile CostDetective
 ```
 
 ---
 
-## Step 3 — Push Docker Images to ECR
+## Step 3 — CI/CD with Jenkins
 
-```bash
-export AWS_PROFILE=CostDetective
-export AWS_REGION=us-east-1
-export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+The `Jenkinsfile` runs these stages automatically on every push:
 
-# Authenticate Docker to ECR
-aws ecr get-login-password --region $AWS_REGION | \
-  docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+1. **Checkout** — clone repo
+2. **Resolve AWS Account** — derives account ID at runtime via `aws sts get-caller-identity` (never hardcoded)
+3. **Build Images** — frontend and backend in parallel
+4. **Security Scan (Trivy)** — blocks on any HIGH/CRITICAL CVE; both images scanned in parallel
+5. **Push to ECR** — tagged with `<build>-<git-sha>`
+6. **Run DB Migration** — one-off ECS task before new containers go live
+7. **Deploy Backend** — `ecs update-service`, waits for stable
+8. **Deploy Frontend** — same, after backend is stable
 
-# Build and push frontend
-docker build -t shopnow-frontend ./frontend
-docker tag shopnow-frontend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/shopnow-frontend:latest
-docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/shopnow-frontend:latest
+![Jenkins pipeline success](docs/screenshots/jenkins-pipeline-success.png)
 
-# Build and push backend
-docker build -t shopnow-backend ./backend
-docker tag shopnow-backend:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/shopnow-backend:latest
-docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/shopnow-backend:latest
-```
+### Jenkins setup
 
-> **Note:** Run `terraform apply` in `terraform/environments/ecs` first to create the ECR repositories before pushing.
+Add an AWS credential in Jenkins with ID `indestructible-creds`, then point a pipeline job at this repo.
 
 ---
 
@@ -157,40 +143,96 @@ docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/shopnow-backend:latest
 ```bash
 cd terraform/environments/ecs
 
-# Copy and fill in secrets
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars — set db_password, jwt_secret, db_host, redis_host
+# Create terraform.tfvars (gitignored — contains secrets)
+cat > terraform.tfvars <<EOF
+aws_region = "eu-central-1"
+name       = "shopnow"
 
-terraform init
-terraform plan
-terraform apply
+frontend_desired_count = 2
+backend_desired_count  = 2
+
+db_name     = "shopnow"
+db_user     = "shopnow"
+db_password = "YOUR_PASSWORD"
+jwt_secret  = "YOUR_JWT_SECRET"
+EOF
+
+terraform init \
+  -backend-config="bucket=shopnow-terraform-state-eu" \
+  -backend-config="region=eu-central-1" \
+  -backend-config="profile=CostDetective"
+
+terraform apply -var-file=terraform.tfvars
 ```
 
-After apply, the ALB DNS is printed:
-```
-alb_dns_name = "shopnow-alb-XXXXXXXX.us-east-1.elb.amazonaws.com"
+This provisions:
+- VPC with public/private subnets and NAT Gateway
+- ECR repositories for frontend and backend
+- ECS cluster with Fargate services: frontend, backend, postgres, redis
+- AWS Cloud Map namespace `shopnow.local` for service discovery
+- ALB with path-based routing (`/api/*` → backend, `/*` → frontend)
+
+After apply, trigger a Jenkins build to push images and run the migration. Then seed the database:
+
+```bash
+SUBNETS=$(aws ec2 describe-subnets \
+  --filters 'Name=tag:Name,Values=shopnow-ecs-private-*' \
+  --query 'Subnets[*].SubnetId' \
+  --output text --region eu-central-1 --profile CostDetective | tr '\t' ',')
+
+BACKEND_SG=$(aws ec2 describe-security-groups \
+  --filters 'Name=tag:Name,Values=shopnow-ecs-backend-sg' \
+  --query 'SecurityGroups[0].GroupId' \
+  --output text --region eu-central-1 --profile CostDetective)
+
+aws ecs run-task \
+  --cluster shopnow-cluster \
+  --task-definition shopnow-backend:1 \
+  --launch-type FARGATE \
+  --overrides '{"containerOverrides":[{"name":"backend","command":["node","src/config/seed.js"]}]}' \
+  --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$BACKEND_SG],assignPublicIp=DISABLED}" \
+  --region eu-central-1 --profile CostDetective
 ```
 
-Visit that URL in your browser — ShopNow is live on ECS.
+### ECS Screenshots
+
+**ShopNow running on ECS — products loaded:**
+
+![ShopNow on ECS](docs/screenshots/ecs-shopnow-products.png)
+
+**ECS cluster — 4 services, 6 running tasks:**
+
+![ECS cluster overview](docs/screenshots/ecs-cluster-overview.png)
+
+**All 4 ECS services active (frontend, backend, postgres, redis):**
+
+![ECS services](docs/screenshots/ecs-services-all-active.png)
+
+**ECR repositories:**
+
+![ECR repositories](docs/screenshots/ecr-repositories.png)
+
+**ECR images tagged with build number + git SHA:**
+
+![ECR images](docs/screenshots/ecr-frontend-images.png)
 
 ### ECS Resiliency Test
 
 ```bash
-# List running tasks
-aws ecs list-tasks --cluster shopnow-cluster --profile CostDetective
-
-# Stop (kill) one task
+# Stop a backend task
 aws ecs stop-task \
   --cluster shopnow-cluster \
-  --task <TASK_ARN> \
-  --profile CostDetective
+  --task $(aws ecs list-tasks --cluster shopnow-cluster \
+    --service-name shopnow-backend --query 'taskArns[0]' --output text \
+    --region eu-central-1 --profile CostDetective) \
+  --region eu-central-1 --profile CostDetective
 
-# Watch ECS automatically restart it (within ~30s)
+# ECS replaces it automatically within ~30s
 aws ecs describe-services \
   --cluster shopnow-cluster \
   --services shopnow-backend \
   --query 'services[0].{Running:runningCount,Desired:desiredCount}' \
-  --profile CostDetective
+  --region eu-central-1 --profile CostDetective
 ```
 
 ---
@@ -201,98 +243,108 @@ aws ecs describe-services \
 
 ```bash
 cd terraform/environments/eks
-terraform init
-terraform plan
+
+terraform init \
+  -backend-config="bucket=shopnow-terraform-state-eu" \
+  -backend-config="region=eu-central-1" \
+  -backend-config="profile=CostDetective"
+
 terraform apply
 ```
+
+Takes ~15 minutes for the EKS control plane.
 
 ### 5.2 Configure kubectl
 
 ```bash
 aws eks update-kubeconfig \
-  --name shopnow-cluster \
-  --region us-east-1 \
+  --name shopnow \
+  --region eu-central-1 \
   --profile CostDetective
 
-kubectl get nodes   # Should show 2 ready nodes
+kubectl get nodes
 ```
 
 ### 5.3 Install AWS Load Balancer Controller
 
 ```bash
-# Get the ALB controller role ARN from Terraform output
 ALB_ROLE_ARN=$(terraform output -raw alb_controller_role_arn)
 
-# Install via Helm
 helm repo add eks https://aws.github.io/eks-charts
 helm repo update
 
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
-  --set clusterName=shopnow-cluster \
+  --set clusterName=shopnow \
   --set serviceAccount.create=true \
   --set serviceAccount.name=aws-load-balancer-controller \
-  --set serviceAccount.annotations."eks\.amazonaws\.com/role-arn"=$ALB_ROLE_ARN
+  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$ALB_ROLE_ARN"
 
-# Verify
 kubectl get deployment aws-load-balancer-controller -n kube-system
 ```
 
 ### 5.4 Deploy the Application
 
 ```bash
-# Get ECR URLs
+# Get ECR image URLs
 FRONTEND_IMAGE=$(terraform output -raw frontend_ecr_url):latest
 BACKEND_IMAGE=$(terraform output -raw backend_ecr_url):latest
 
-# Create namespace
+# Encode secrets
+DB_PASSWORD_B64=$(echo -n 'YOUR_PASSWORD' | base64)
+JWT_SECRET_B64=$(echo -n 'YOUR_JWT_SECRET' | base64)
+
+# Namespace
 kubectl apply -f k8s/namespace/
 
-# Create secrets (edit base64 values first)
-kubectl apply -f k8s/backend/secrets.yaml
+# Secrets
+sed -e "s|CHANGEME_BASE64|placeholder|g" k8s/backend/secrets.yaml | \
+  kubectl apply -f -
 
-# Deploy data tier
+kubectl patch secret shopnow-secrets -n shopnow \
+  -p "{\"data\":{\"DB_PASSWORD\":\"$DB_PASSWORD_B64\",\"JWT_SECRET\":\"$JWT_SECRET_B64\"}}"
+
+# Data tier
 kubectl apply -f k8s/postgres/
 kubectl apply -f k8s/redis/
 
-# Wait for databases
-kubectl wait --for=condition=ready pod -l app=postgres -n shopnow --timeout=90s
-kubectl wait --for=condition=ready pod -l app=redis -n shopnow --timeout=90s
+kubectl wait --for=condition=ready pod -l app=postgres -n shopnow --timeout=120s
+kubectl wait --for=condition=ready pod -l app=redis -n shopnow --timeout=60s
 
-# Run migration and seed
+# Migrate and seed
 kubectl run migrate --image=$BACKEND_IMAGE --restart=Never -n shopnow \
   --env="DB_HOST=postgres" --env="DB_PORT=5432" \
   --env="DB_NAME=shopnow" --env="DB_USER=shopnow" \
-  --env="DB_PASSWORD=<your_password>" \
+  --env="DB_PASSWORD=YOUR_PASSWORD" \
   -- node src/config/migrate.js
+
+kubectl wait --for=condition=complete job/migrate -n shopnow --timeout=60s 2>/dev/null || \
+  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/migrate -n shopnow --timeout=60s
 
 kubectl run seed --image=$BACKEND_IMAGE --restart=Never -n shopnow \
   --env="DB_HOST=postgres" --env="DB_PORT=5432" \
   --env="DB_NAME=shopnow" --env="DB_USER=shopnow" \
-  --env="DB_PASSWORD=<your_password>" \
+  --env="DB_PASSWORD=YOUR_PASSWORD" \
   -- node src/config/seed.js
 
-# Deploy app (replace image placeholders)
+# App tier
 sed "s|BACKEND_ECR_IMAGE|$BACKEND_IMAGE|g" k8s/backend/backend.yaml | kubectl apply -f -
 sed "s|FRONTEND_ECR_IMAGE|$FRONTEND_IMAGE|g" k8s/frontend/frontend.yaml | kubectl apply -f -
 
-# Deploy ingress (ALB)
+# Ingress (ALB)
 kubectl apply -f k8s/ingress/
 
-# Get the ALB DNS (takes ~2 minutes to provision)
+# Get the ALB URL (~2 min to provision)
 kubectl get ingress -n shopnow
 ```
 
 ### EKS Resiliency Test
 
 ```bash
-# List pods
-kubectl get pods -n shopnow
-
 # Kill a backend pod
-kubectl delete pod <BACKEND_POD_NAME> -n shopnow
+kubectl delete pod -l app=backend -n shopnow --wait=false
 
-# Watch Kubernetes immediately schedule a replacement
+# Watch Kubernetes immediately schedule replacements
 kubectl get pods -n shopnow -w
 ```
 
@@ -306,9 +358,9 @@ kubectl get pods -n shopnow -w
 | POST | `/api/auth/register` | — | Register user |
 | POST | `/api/auth/login` | — | Login, returns JWT |
 | GET | `/api/auth/me` | JWT | Current user |
-| GET | `/api/products` | — | List products (paginated, filterable) |
+| GET | `/api/products` | — | List products |
 | GET | `/api/products/:id` | — | Single product |
-| GET | `/api/products/categories` | — | List categories |
+| GET | `/api/products/categories` | — | Categories |
 | GET | `/api/cart` | JWT | Get cart |
 | POST | `/api/cart/add` | JWT | Add item |
 | PUT | `/api/cart/update` | JWT | Update quantity |
@@ -320,27 +372,29 @@ kubectl get pods -n shopnow -w
 
 ---
 
-## Teardown
-
-```bash
-# ECS
-cd terraform/environments/ecs && terraform destroy
-
-# EKS
-kubectl delete namespace shopnow
-cd terraform/environments/eks && terraform destroy
-```
-
----
-
-## ECS vs EKS — Benchmark Notes
+## ECS vs EKS — Benchmark
 
 | | ECS (Fargate) | EKS (Node Groups) |
 |---|---|---|
-| Setup time | ~5 min | ~15 min |
-| Operational overhead | Low | High |
-| Cost | Pay per task | Pay per node |
-| Scaling | Per-service auto scaling | HPA + Cluster Autoscaler |
+| Provisioning time | ~5 min | ~15 min |
+| Operational overhead | Low — AWS manages everything | High — node management, add-ons |
+| Cost model | Pay per task (vCPU + RAM) | Pay per node (always-on EC2) |
+| Scaling | Per-service autoscaling | HPA + Cluster Autoscaler |
 | Self-healing | ECS replaces failed tasks | K8s replaces failed pods |
+| Service discovery | AWS Cloud Map | Kubernetes DNS (kube-dns) |
+| Ingress | ALB via Terraform | ALB via AWS Load Balancer Controller |
 | Ecosystem | AWS-native | CNCF / portable |
-| Best for | Simple workloads, AWS-only | Complex workloads, multi-cloud |
+| Best for | Simple workloads, AWS-only shops | Complex workloads, multi-cloud, GitOps |
+
+---
+
+## Teardown
+
+```bash
+# EKS
+kubectl delete namespace shopnow
+cd terraform/environments/eks && terraform destroy
+
+# ECS
+cd terraform/environments/ecs && terraform destroy
+```
