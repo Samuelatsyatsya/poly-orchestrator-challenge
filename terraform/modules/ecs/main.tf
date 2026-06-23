@@ -355,21 +355,6 @@ resource "aws_efs_mount_target" "postgres" {
   security_groups = [var.postgres_sg_id]
 }
 
-resource "aws_efs_access_point" "postgres" {
-  file_system_id = aws_efs_file_system.postgres.id
-
-  root_directory {
-    path = "/pgdata"
-    creation_info {
-      owner_gid   = 0
-      owner_uid   = 0
-      permissions = "755"
-    }
-  }
-
-  tags = var.tags
-}
-
 ################################
 # EFS Security Group — allow NFS from Postgres SG
 # EFS mount targets need port 2049 inbound
@@ -430,12 +415,8 @@ resource "aws_ecs_task_definition" "postgres" {
   volume {
     name = "pgdata"
     efs_volume_configuration {
-      file_system_id          = aws_efs_file_system.postgres.id
-      transit_encryption      = "ENABLED"
-      authorization_config {
-        access_point_id = aws_efs_access_point.postgres.id
-        iam             = "DISABLED"
-      }
+      file_system_id     = aws_efs_file_system.postgres.id
+      transit_encryption = "ENABLED"
     }
   }
 
