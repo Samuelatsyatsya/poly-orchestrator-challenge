@@ -132,6 +132,10 @@ The `Jenkinsfile` runs these stages automatically on every push:
 
 ![Jenkins pipeline success](docs/screenshots/jenkins-pipeline-success.png)
 
+**Full pipeline including ECS and EKS deploy (build #35):**
+
+![Jenkins full pipeline](docs/screenshots/jenkins-pipeline-ecs-eks.png)
+
 ### Jenkins setup
 
 Add an AWS credential in Jenkins with ID `indestructible-creds`, then point a pipeline job at this repo.
