@@ -2,11 +2,14 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION    = 'eu-central-1'
-        BACKEND_REPO  = 'shopnow-backend'
-        FRONTEND_REPO = 'shopnow-frontend'
-        ECS_CLUSTER   = 'shopnow-cluster'
-        IMAGE_TAG     = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
+        AWS_REGION        = 'eu-central-1'
+        BACKEND_REPO      = 'shopnow-backend'
+        FRONTEND_REPO     = 'shopnow-frontend'
+        EKS_BACKEND_REPO  = 'shopnow-eks-backend'
+        EKS_FRONTEND_REPO = 'shopnow-eks-frontend'
+        ECS_CLUSTER       = 'shopnow-cluster'
+        EKS_CLUSTER       = 'shopnow-cluster'
+        IMAGE_TAG         = "${env.BUILD_NUMBER}-${env.GIT_COMMIT?.take(7) ?: 'local'}"
     }
 
     stages {
@@ -44,6 +47,8 @@ pipeline {
                             docker build \
                               -t ${ECR_REGISTRY}/${BACKEND_REPO}:${IMAGE_TAG} \
                               -t ${ECR_REGISTRY}/${BACKEND_REPO}:latest \
+                              -t ${ECR_REGISTRY}/${EKS_BACKEND_REPO}:${IMAGE_TAG} \
+                              -t ${ECR_REGISTRY}/${EKS_BACKEND_REPO}:latest \
                               ./backend
                         """
                     }
@@ -54,6 +59,8 @@ pipeline {
                             docker build \
                               -t ${ECR_REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG} \
                               -t ${ECR_REGISTRY}/${FRONTEND_REPO}:latest \
+                              -t ${ECR_REGISTRY}/${EKS_FRONTEND_REPO}:${IMAGE_TAG} \
+                              -t ${ECR_REGISTRY}/${EKS_FRONTEND_REPO}:latest \
                               ./frontend
                         """
                     }
@@ -111,6 +118,11 @@ pipeline {
                         docker push ${ECR_REGISTRY}/${BACKEND_REPO}:latest
                         docker push ${ECR_REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG}
                         docker push ${ECR_REGISTRY}/${FRONTEND_REPO}:latest
+
+                        docker push ${ECR_REGISTRY}/${EKS_BACKEND_REPO}:${IMAGE_TAG}
+                        docker push ${ECR_REGISTRY}/${EKS_BACKEND_REPO}:latest
+                        docker push ${ECR_REGISTRY}/${EKS_FRONTEND_REPO}:${IMAGE_TAG}
+                        docker push ${ECR_REGISTRY}/${EKS_FRONTEND_REPO}:latest
                     """
                 }
             }
@@ -198,6 +210,39 @@ pipeline {
                 }
             }
         }
+
+        stage('Deploy to EKS') {
+            // Rolling restart picks up the new :latest image pushed above
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'indestructible-creds'
+                ]]) {
+                    sh """
+                        # Install kubectl if not present
+                        if ! command -v kubectl &> /dev/null; then
+                            echo "kubectl not found — installing..."
+                            curl -sLO "https://dl.k8s.io/release/\$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+                            chmod +x kubectl
+                            mv kubectl /usr/local/bin/kubectl
+                            echo "kubectl installed: \$(kubectl version --client --short)"
+                        else
+                            echo "kubectl already installed: \$(kubectl version --client --short 2>/dev/null || kubectl version --client)"
+                        fi
+
+                        aws eks update-kubeconfig \
+                          --name ${EKS_CLUSTER} \
+                          --region ${AWS_REGION}
+
+                        kubectl rollout restart deployment/backend -n shopnow
+                        kubectl rollout restart deployment/frontend -n shopnow
+
+                        kubectl rollout status deployment/backend -n shopnow --timeout=300s
+                        kubectl rollout status deployment/frontend -n shopnow --timeout=300s
+                    """
+                }
+            }
+        }
     }
 
     post {
@@ -206,6 +251,8 @@ pipeline {
             sh """
                 docker rmi ${ECR_REGISTRY}/${BACKEND_REPO}:${IMAGE_TAG} || true
                 docker rmi ${ECR_REGISTRY}/${FRONTEND_REPO}:${IMAGE_TAG} || true
+                docker rmi ${ECR_REGISTRY}/${EKS_BACKEND_REPO}:${IMAGE_TAG} || true
+                docker rmi ${ECR_REGISTRY}/${EKS_FRONTEND_REPO}:${IMAGE_TAG} || true
             """
         }
         success {
