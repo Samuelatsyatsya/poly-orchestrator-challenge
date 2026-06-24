@@ -3,3 +3,7 @@ dist
 .env
 *.log
 .git
+.gitignore
+README.md
+*.md
+.dockerignore

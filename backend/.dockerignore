@@ -2,3 +2,13 @@ node_modules
 .env
 *.log
 .git
+.gitignore
+README.md
+*.md
+.dockerignore
+tests
+__tests__
+*.test.js
+*.spec.js
+coverage
+.nyc_output
