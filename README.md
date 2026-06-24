@@ -338,6 +338,16 @@ kubectl apply -f k8s/ingress/
 kubectl get ingress -n shopnow
 ```
 
+### EKS Screenshots
+
+**ShopNow running on EKS — products loaded:**
+
+![ShopNow on EKS](docs/screenshots/eks-shopnow-products.png)
+
+**All pods running + resiliency demo (backend pods replaced after deletion):**
+
+![EKS pods running](docs/screenshots/eks-pods-running.png)
+
 ### EKS Resiliency Test
 
 ```bash
