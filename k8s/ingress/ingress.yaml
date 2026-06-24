@@ -4,15 +4,12 @@ metadata:
   name: shopnow-ingress
   namespace: shopnow
   annotations:
-    kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/healthcheck-path: /health
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
-    # Path-based routing: /api/* → backend, /* → frontend
-    alb.ingress.kubernetes.io/actions.backend-action: |
-      {"type":"forward","forwardConfig":{"targetGroups":[{"serviceName":"backend","servicePort":3000,"weight":100}]}}
+    alb.ingress.kubernetes.io/healthcheck-path: /health
 spec:
+  ingressClassName: alb
   rules:
     - http:
         paths:

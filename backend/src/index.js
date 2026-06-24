@@ -19,8 +19,8 @@ app.use(cors({
 app.use(express.json());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 200 }));
 
-// Health check — used by ECS/EKS probes
-app.get('/api/health', (req, res) => {
+// Health check — used by ECS/EKS probes and ALB health checks
+app.get(['/health', '/api/health'], (req, res) => {
   res.json({ status: 'ok', service: 'shopnow-backend', timestamp: new Date().toISOString() });
 });
 
