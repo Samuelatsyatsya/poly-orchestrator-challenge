@@ -15,7 +15,7 @@ variable "vpc_cidr" {
 
 variable "kubernetes_version" {
   type    = string
-  default = "1.29"
+  default = "1.32"
 }
 
 variable "node_instance_types" {
